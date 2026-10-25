@@ -1,0 +1,42 @@
+name: Run Medical Research Aggregator
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # Runs daily at 2:00 AM UTC (8:00 AM Bangladesh Time)
+  workflow_dispatch: # Allows manual testing anytime from the Actions tab
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # Crucial: allows the bot to commit sent_papers.json back to the repo
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Run aggregator script
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python aggregator.py
+
+      - name: Commit and push updated history
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git add sent_papers.json
+          git diff --staged --quiet || git commit -m "Update sent_papers.json history [skip ci]"
+          git push
