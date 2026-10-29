@@ -140,8 +140,7 @@ def has_bangladeshi_author(paper):
 def is_medical_paper(paper):
     """
     STRICT GATEKEEPER: Ensures the paper belongs exclusively to medical/health fields.
-    Blocks computer science, physics, pure biology, agriculture, etc., even if 
-    they originate from Bangladesh or mention Bangladesh.
+    Blocks computer science, physics, pure biology, agriculture, etc.
     """
     topics = paper.get("topics") or []
     if not topics:
@@ -161,9 +160,7 @@ def fetch_openalex_papers():
 
     unique_papers = {}
 
-    # ------------------------------------------------------------------
     # STRATEGIC STREAM 1: Medical Research ABOUT Bangladesh (Keyword Search)
-    # ------------------------------------------------------------------
     for term in ["Bangladesh"]:
         logging.info("Querying OpenAlex keyword search for: %s", term)
         for page in range(1, MAX_PAGES + 1):
@@ -193,10 +190,8 @@ def fetch_openalex_papers():
                     paper_id = paper.get("id")
                     if not paper_id or paper_id in unique_papers:
                         continue
-                    # Must be strictly medical
                     if not is_medical_paper(paper):
                         continue
-                    # Must be locally relevant (about Bangladesh or local regions)
                     if not (is_locally_relevant(paper) or has_bangladeshi_author(paper)):
                         continue
                     unique_papers[paper_id] = paper
@@ -210,10 +205,7 @@ def fetch_openalex_papers():
                 logging.error("Error fetching OpenAlex search data on page %d: %s", page, e)
                 break
 
-    # ------------------------------------------------------------------
     # STRATEGIC STREAM 2: Medical Research BY Bangladeshi Researchers
-    # (Affiliation filter country_code:bd + Strict Medical Gatekeeper)
-    # ------------------------------------------------------------------
     logging.info("Querying OpenAlex by Bangladeshi author affiliation (country_code:bd)")
     for page in range(1, MAX_PAGES + 1):
         params = {
@@ -241,7 +233,6 @@ def fetch_openalex_papers():
                 paper_id = paper.get("id")
                 if not paper_id or paper_id in unique_papers:
                     continue
-                # STRICT FILTER: Discards non-medical papers (e.g., CS/Physics) even from BD authors
                 if not is_medical_paper(paper):
                     continue
                 unique_papers[paper_id] = paper
@@ -334,15 +325,31 @@ def main():
         if paper_id in sent_set:
             continue
 
-        message = format_message(paper)
-        send_telegram_message(message)
+        try:
+            message = format_message(paper)
+            send_telegram_message(message)
 
-        sent_ids.append(paper_id)
-        sent_set.add(paper_id)
-        save_history(sent_ids)
-        new_count += 1
+            sent_ids.append(paper_id)
+            sent_set.add(paper_id)
+            save_history(sent_ids)
+            new_count += 1
 
-        logging.info("Delivered: %s", paper.get("title", "Untitled"))
+            logging.info("Delivered: %s", paper.get("title", "Untitled"))
+        
+        except requests.exceptions.HTTPError as e:
+            # Handle Telegram API errors (like Bad Request 400 due to malformed metadata/URLs)
+            logging.error("HTTP Error delivering paper %s (%s): %s", paper_id, paper.get("title"), e)
+            if e.response is not None and e.response.status_code == 400:
+                logging.warning("Skipping malformed paper and marking as sent to prevent loop: %s", paper_id)
+                sent_ids.append(paper_id)
+                sent_set.add(paper_id)
+                save_history(sent_ids)
+            else:
+                raise
+        except Exception as e:
+            logging.error("Unexpected error delivering paper %s: %s", paper_id, e)
+            raise
+
         time.sleep(MESSAGE_DELAY)
 
     logging.info("Completed. Delivered %d new papers.", new_count)
